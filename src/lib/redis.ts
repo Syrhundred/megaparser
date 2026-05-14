@@ -9,6 +9,7 @@ const globalForRedis = globalThis as unknown as { redis: IORedis | undefined };
 export const redis =
   globalForRedis.redis ??
   new IORedis(REDIS_URL, {
+    lazyConnect: true,
     maxRetriesPerRequest: null,
     enableReadyCheck: false,
   });
