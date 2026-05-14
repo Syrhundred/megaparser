@@ -26,63 +26,73 @@ export interface MapsScrapeJobPayload {
   engine: '2gis' | 'yandex_maps' | 'google_places' | 'both';
 }
 
-// ─── Queue instances ──────────────────────────────────────────────────────────
+// ─── Lazy Queue instances (created on first use, not at import time) ──────────
+// Avoids Redis connection attempts during Next.js build / static generation.
 
-export const scrapeQueue = new Queue<ScrapeJobPayload>('scrape', {
-  connection: redis,
-  defaultJobOptions: {
+let _scrapeQueue: Queue<ScrapeJobPayload> | null = null;
+let _sendQueue: Queue<SendJobPayload> | null = null;
+let _mapsScrapeQueue: Queue<MapsScrapeJobPayload> | null = null;
+
+const defaultJobOpts = {
+  scrape: {
     attempts: 3,
-    backoff: { type: 'exponential', delay: 10_000 },
+    backoff: { type: 'exponential' as const, delay: 10_000 },
     removeOnComplete: { count: 200 },
     removeOnFail: { count: 500 },
   },
-});
-
-export const sendQueue = new Queue<SendJobPayload>('send', {
-  connection: redis,
-  defaultJobOptions: {
+  send: {
     attempts: 3,
-    backoff: { type: 'fixed', delay: 60_000 },
+    backoff: { type: 'fixed' as const, delay: 60_000 },
     removeOnComplete: { count: 200 },
     removeOnFail: { count: 500 },
   },
-});
-
-export const mapsScrapeQueue = new Queue<MapsScrapeJobPayload>('maps-scrape', {
-  connection: redis,
-  defaultJobOptions: {
+  maps: {
     attempts: 2,
-    backoff: { type: 'exponential', delay: 15_000 },
+    backoff: { type: 'exponential' as const, delay: 15_000 },
     removeOnComplete: { count: 100 },
     removeOnFail: { count: 200 },
   },
-});
+};
+
+function getScrapeQueue(): Queue<ScrapeJobPayload> {
+  if (!_scrapeQueue) {
+    _scrapeQueue = new Queue<ScrapeJobPayload>('scrape', {
+      connection: redis,
+      defaultJobOptions: defaultJobOpts.scrape,
+    });
+  }
+  return _scrapeQueue;
+}
+
+function getSendQueue(): Queue<SendJobPayload> {
+  if (!_sendQueue) {
+    _sendQueue = new Queue<SendJobPayload>('send', {
+      connection: redis,
+      defaultJobOptions: defaultJobOpts.send,
+    });
+  }
+  return _sendQueue;
+}
+
+function getMapsScrapeQueue(): Queue<MapsScrapeJobPayload> {
+  if (!_mapsScrapeQueue) {
+    _mapsScrapeQueue = new Queue<MapsScrapeJobPayload>('maps-scrape', {
+      connection: redis,
+      defaultJobOptions: defaultJobOpts.maps,
+    });
+  }
+  return _mapsScrapeQueue;
+}
 
 // ─── Typed enqueue helpers (called from API routes) ───────────────────────────
 
-/**
- * Enqueue a scrape job for a single company.
- * Returns the BullMQ job ID.
- */
 export async function enqueueScrape(payload: ScrapeJobPayload): Promise<string> {
-  const job = await scrapeQueue.add('scrape_company', payload, {
+  const job = await getScrapeQueue().add('scrape_company', payload, {
     jobId: `scrape-${payload.companyId}`,
-    // Deduplicate: if a job with this ID already exists and is active/waiting,
-    // BullMQ will skip adding a duplicate.
   });
   return job.id!;
 }
 
-/**
- * Enqueue a single send job.
- *
- * @param payload       - job data (companyId, outreachId, attachmentName?)
- * @param explicitDelay - use this exact delay in ms (for batch sends with pre-computed
- *                        staggered timing). When omitted a random delay in [minMs, maxMs]
- *                        is generated automatically.
- * @param minMs         - minimum random delay (default 3 min)
- * @param maxMs         - maximum random delay (default 8 min)
- */
 export async function enqueueSend(
   payload: Omit<SendJobPayload, 'delayMs'>,
   explicitDelay?: number,
@@ -92,7 +102,7 @@ export async function enqueueSend(
   const delayMs =
     explicitDelay ?? Math.floor(Math.random() * (maxMs - minMs + 1)) + minMs;
 
-  const job = await sendQueue.add(
+  const job = await getSendQueue().add(
     'send_email',
     { ...payload, delayMs } satisfies SendJobPayload,
     {
@@ -104,10 +114,11 @@ export async function enqueueSend(
   return { jobId: job.id!, delayMs };
 }
 
-/**
- * Enqueue a maps-scrape job for a search query.
- */
 export async function enqueueMapsScrape(payload: MapsScrapeJobPayload): Promise<string> {
-  const job = await mapsScrapeQueue.add('scrape_maps', payload);
+  const job = await getMapsScrapeQueue().add('scrape_maps', payload);
   return job.id!;
 }
+
+// ─── Re-export getters for workers (workers need to pass queue instances to Workers) ─
+
+export { getScrapeQueue, getSendQueue, getMapsScrapeQueue };
