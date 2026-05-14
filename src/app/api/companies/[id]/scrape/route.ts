@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { enqueueScrape } from '@/lib/queues';
 
@@ -15,29 +16,34 @@ export async function POST(_req: NextRequest, { params }: { params: { id: string
       );
     }
 
-    // Create a DB Job row for UI visibility
-    const dbJob = await prisma.job.create({
-      data: {
-        queue:      'scrape',
-        type:       'scrape_company',
-        status:     'pending',
-        payload:    { companyId: company.id, website: company.website } as object,
-        companyId:  company.id,
-        maxAttempts: 3,
-      },
-    });
-
-    // Enqueue — the worker will run Playwright, extract contacts, write results back
+    // Enqueue first to get the BullMQ job ID (fixed: scrape-{companyId})
     const bullJobId = await enqueueScrape({
       companyId: company.id,
       website:   company.website,
     });
 
-    // Link BullMQ job ID to the DB row and the company
+    // Upsert Job row — handles the case where a previous Job row with the same
+    // bullJobId already exists (repeated scrapes on the same company)
     await Promise.all([
-      prisma.job.update({
-        where: { id: dbJob.id },
-        data:  { bullJobId },
+      prisma.job.upsert({
+        where: { bullJobId },
+        update: {
+          status:    'pending',
+          errorMsg:  null,
+          startedAt: null,
+          finishedAt: null,
+          result:    Prisma.JsonNull,
+          payload:   { companyId: company.id, website: company.website } as object,
+        },
+        create: {
+          bullJobId,
+          queue:       'scrape',
+          type:        'scrape_company',
+          status:      'pending',
+          payload:     { companyId: company.id, website: company.website } as object,
+          companyId:   company.id,
+          maxAttempts: 3,
+        },
       }),
       prisma.company.update({
         where: { id: company.id },

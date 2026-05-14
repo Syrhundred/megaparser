@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { Prisma } from '@prisma/client';
 import { prisma } from '@/lib/prisma';
 import { enqueueScrape } from '@/lib/queues';
 
@@ -23,21 +24,29 @@ export async function POST(req: NextRequest) {
       continue;
     }
 
-    const dbJob = await prisma.job.create({
-      data: {
-        queue:       'scrape',
-        type:        'scrape_company',
-        status:      'pending',
-        payload:     { companyId: company.id, website: company.website } as object,
-        companyId:   company.id,
-        maxAttempts: 3,
-      },
-    });
-
     const bullJobId = await enqueueScrape({ companyId: company.id, website: company.website });
 
     await Promise.all([
-      prisma.job.update({ where: { id: dbJob.id }, data: { bullJobId } }),
+      prisma.job.upsert({
+        where: { bullJobId },
+        update: {
+          status:     'pending',
+          errorMsg:   null,
+          startedAt:  null,
+          finishedAt: null,
+          result:     Prisma.JsonNull,
+          payload:    { companyId: company.id, website: company.website } as object,
+        },
+        create: {
+          bullJobId,
+          queue:       'scrape',
+          type:        'scrape_company',
+          status:      'pending',
+          payload:     { companyId: company.id, website: company.website } as object,
+          companyId:   company.id,
+          maxAttempts: 3,
+        },
+      }),
       prisma.company.update({ where: { id: company.id }, data: { scrapeJobId: bullJobId } }),
     ]);
 
