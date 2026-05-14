@@ -1,0 +1,89 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB:       megaparser
+      POSTGRES_USER:     megaparser
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U megaparser"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # One-time: push Prisma schema + seed admin user
+  migrate:
+    build:
+      context: .
+      target: worker
+    command: sh -c "npx prisma db push && npx tsx prisma/seed.ts || true"
+    environment:
+      DATABASE_URL:   postgresql://megaparser:${POSTGRES_PASSWORD:-changeme}@postgres:5432/megaparser
+      ADMIN_EMAIL:    ${ADMIN_EMAIL:-admin@example.com}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:-changeme123}
+    depends_on:
+      postgres: { condition: service_healthy }
+    restart: "no"
+
+  web:
+    build:
+      context: .
+      target: web
+    restart: unless-stopped
+    ports:
+      - "${PORT:-3000}:3000"
+    environment:
+      DATABASE_URL:    postgresql://megaparser:${POSTGRES_PASSWORD:-changeme}@postgres:5432/megaparser
+      REDIS_URL:       redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      NEXTAUTH_URL:    ${NEXTAUTH_URL:-http://localhost:3000}
+      HOSTNAME:        "0.0.0.0"
+    depends_on:
+      postgres:  { condition: service_healthy }
+      redis:     { condition: service_healthy }
+      migrate:   { condition: service_completed_successfully }
+    volumes:
+      - uploads:/app/public/uploads
+
+  worker:
+    build:
+      context: .
+      target: worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL:    postgresql://megaparser:${POSTGRES_PASSWORD:-changeme}@postgres:5432/megaparser
+      REDIS_URL:       redis://redis:6379
+      NEXTAUTH_SECRET: ${NEXTAUTH_SECRET:?NEXTAUTH_SECRET is required}
+      # Optional SMTP — can also be configured via Settings UI at runtime
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USER: ${SMTP_USER:-}
+      SMTP_PASS: ${SMTP_PASS:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+      PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH: /usr/bin/chromium
+    depends_on:
+      postgres:  { condition: service_healthy }
+      redis:     { condition: service_healthy }
+      migrate:   { condition: service_completed_successfully }
+    volumes:
+      - uploads:/app/public/uploads
+
+volumes:
+  postgres_data:
+  redis_data:
+  uploads:

@@ -1,0 +1,104 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Company {
+  id             String     @id @default(cuid())
+  name           String
+  website        String     @unique
+  email          String?
+  phone          String?
+  whatsapp       String?
+  contactPageUrl String?
+  description    String?
+  hasForm        Boolean    @default(false)
+  allEmails      String?
+  address        String?
+  status         String     @default("site_found")
+  searchQuery    String?
+  sentMessage    String?
+  sentAt         DateTime?
+  reply          String?
+  foundAt        DateTime   @default(now())
+  createdAt      DateTime   @default(now())
+  updatedAt      DateTime   @updatedAt
+  // Background job tracking
+  scrapeJobId    String?    // BullMQ job ID for the active scrape job
+  sendJobId      String?    // BullMQ job ID for the active send job
+  outreaches     Outreach[]
+  jobs           Job[]
+}
+
+model Outreach {
+  id          String    @id @default(cuid())
+  companyId   String
+  company     Company   @relation(fields: [companyId], references: [id], onDelete: Cascade)
+  channel     String
+  subject     String?
+  message     String
+  status      String
+  errorMsg    String?
+  sentAt      DateTime  @default(now())
+  // Queue fields
+  scheduledAt DateTime? // when the send was scheduled (before delay fires)
+  retryCount  Int       @default(0)
+  jobId       String?   // BullMQ job ID that processed this send
+}
+
+model Template {
+  id            String   @id @default(cuid())
+  name          String
+  subject       String
+  body          String
+  productDesc   String
+  signatureName String   @default("")
+  signature     String
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+model Setting {
+  id    String @id @default(cuid())
+  key   String @unique
+  value String
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  password      String?
+  name          String?
+  role          String    @default("member")
+  inviteToken   String?   @unique
+  inviteExpires DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Mirrors BullMQ jobs in the DB for UI visibility and audit
+model Job {
+  id          String    @id @default(cuid())
+  bullJobId   String?   @unique // BullMQ's own job ID
+  queue       String    // 'scrape' | 'send' | 'maps-scrape'
+  type        String    // e.g. 'scrape_company', 'send_email', 'scrape_maps'
+  status      String    @default("pending") // pending | active | completed | failed | delayed
+  payload     Json      // arbitrary input data for the job
+  result      Json?     // output written back by the worker on success
+  errorMsg    String?
+  attempt     Int       @default(0)
+  maxAttempts Int       @default(3)
+  scheduledAt DateTime? // populated when job has a BullMQ delay
+  startedAt   DateTime?
+  finishedAt  DateTime?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  // Optional link to the company this job is for
+  companyId   String?
+  company     Company?  @relation(fields: [companyId], references: [id], onDelete: SetNull)
+}

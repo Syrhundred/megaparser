@@ -1,0 +1,45 @@
+{
+  "name": "megaparser",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "db:generate": "prisma generate",
+    "db:push": "prisma db push",
+    "db:studio": "prisma studio",
+    "worker": "tsx watch src/workers/index.ts",
+    "worker:prod": "tsx src/workers/index.ts",
+    "db:seed": "tsx prisma/seed.ts"
+  },
+  "dependencies": {
+    "@prisma/client": "^5.22.0",
+    "axios": "^1.7.7",
+    "bcryptjs": "^3.0.3",
+    "bullmq": "^5.0.0",
+    "cheerio": "^1.0.0",
+    "date-fns": "^4.1.0",
+    "ioredis": "^5.4.1",
+    "lucide-react": "^0.460.0",
+    "next": "14.2.29",
+    "next-auth": "^4.24.14",
+    "nodemailer": "^6.9.15",
+    "playwright": "^1.44.0",
+    "react": "^18",
+    "react-dom": "^18"
+  },
+  "devDependencies": {
+    "@types/bcryptjs": "^2.4.6",
+    "@types/node": "^20",
+    "@types/nodemailer": "^6.4.16",
+    "@types/react": "^18",
+    "@types/react-dom": "^18",
+    "autoprefixer": "^10.0.1",
+    "postcss": "^8",
+    "prisma": "^5.22.0",
+    "tailwindcss": "^3.4.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5"
+  }
+}
