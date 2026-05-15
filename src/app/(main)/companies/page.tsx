@@ -1,7 +1,6 @@
 'use client';
 
-export const dynamic = 'force-dynamic';
-
+import { Suspense } from 'react';
 import { useEffect, useState, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
@@ -32,7 +31,7 @@ function avatarColor(name: string): string {
   return AVATAR_COLORS[code % AVATAR_COLORS.length];
 }
 
-export default function CompaniesPage() {
+function CompaniesContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const statusFilter = searchParams.get('status') ?? '';
@@ -631,5 +630,13 @@ export default function CompaniesPage() {
       </div>
     )}
     </>
+  );
+}
+
+export default function CompaniesPage() {
+  return (
+    <Suspense>
+      <CompaniesContent />
+    </Suspense>
   );
 }
