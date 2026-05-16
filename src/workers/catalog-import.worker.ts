@@ -40,9 +40,10 @@ interface ApibaDetailResponse {
     crumbsKato?:  { nameRu?: string };
     cityName?:    string;
   };
-  gosZakupContacts?: ContactSource;
-  userContacts?:     ContactSource;
-  egovContacts?:     { phone?: { value: string }[] | null };
+  // These can be null (not just undefined) in the API response
+  gosZakupContacts?: ContactSource | null;
+  userContacts?:     ContactSource | null;
+  egovContacts?:     ContactSource | null;
   taxes?: {
     taxGraph?: { year: number; value: number }[];
   };
@@ -57,12 +58,14 @@ function extractContacts(detail: ApibaDetailResponse) {
     if (p && !phones.includes(p)) phones.push(p);
   };
 
+  // All three sources can carry phones — check each
   addPhone(detail.gosZakupContacts?.phone?.[0]?.value);
   addPhone(detail.userContacts?.phone?.[0]?.value);
-  addPhone((detail.egovContacts?.phone as unknown as { value: string }[] | null)?.[0]?.value);
+  addPhone(detail.egovContacts?.phone?.[0]?.value);
 
   const email = detail.gosZakupContacts?.email?.trim()
              || detail.userContacts?.email?.trim()
+             || detail.egovContacts?.email?.trim()
              || null;
 
   const website = detail.gosZakupContacts?.website?.trim()
