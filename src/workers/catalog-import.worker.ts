@@ -152,35 +152,30 @@ async function processApiba(job: Job<CatalogImportPayload>) {
                    : 'site_found';
 
       try {
-        // Try upsert by BIN first (most reliable), fall back to website
         const existing = await prisma.company.findFirst({
           where: { OR: [{ bin: company.bin }, { website: websiteUrl }] },
         });
 
         if (existing) {
-          // Only update if we now have better contacts
-          const needsUpdate = (!existing.phone && contacts.phone)
-                           || (!existing.email && contacts.email)
-                           || (!existing.ceo   && ceo);
-          if (needsUpdate) {
-            await prisma.company.update({
-              where: { id: existing.id },
-              data: {
-                phone:     contacts.phone  ?? existing.phone,
-                email:     contacts.email  ?? existing.email,
-                ceo:       ceo             ?? existing.ceo,
-                industry:  industry        ?? existing.industry,
-                city:      city            ?? existing.city,
-                taxAmount: taxAmount       ?? existing.taxAmount,
-                status:    contacts.email  ? 'email_found'
-                         : contacts.phone  ? 'contact_found'
-                         : existing.status,
-              },
-            });
-            updated++;
-          } else {
-            skipped++;
-          }
+          // Always update source + metadata so company appears in registry.
+          // Only overwrite contacts if we got better data.
+          await prisma.company.update({
+            where: { id: existing.id },
+            data: {
+              bin:       company.bin,
+              source:    'apiba',
+              industry:  industry  ?? existing.industry,
+              ceo:       ceo       ?? existing.ceo,
+              city:      city      ?? existing.city,
+              taxAmount: taxAmount ?? existing.taxAmount,
+              phone:     contacts.phone ?? existing.phone,
+              email:     contacts.email ?? existing.email,
+              status:    contacts.email  ? 'email_found'
+                       : contacts.phone  ? 'contact_found'
+                       : existing.status,
+            },
+          });
+          updated++;
         } else {
           await prisma.company.create({
             data: {
