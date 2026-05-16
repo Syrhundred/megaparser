@@ -58,19 +58,32 @@ function RegistryContent() {
   const [cityFilter, setCity]       = useState('');
   const [hasEmail,   setHasEmail]   = useState('');
 
+  const [error, setError] = useState('');
+
   const load = useCallback(async () => {
     setLoading(true);
-    const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
-    if (search)    params.set('search',   search);
-    if (okedFilter) params.set('oked',   okedFilter);
-    if (cityFilter) params.set('city',   cityFilter);
-    if (hasEmail)   params.set('hasEmail', hasEmail);
+    setError('');
+    try {
+      const params = new URLSearchParams({ page: String(page), limit: String(PAGE_SIZE) });
+      if (search)     params.set('search',   search);
+      if (okedFilter) params.set('oked',     okedFilter);
+      if (cityFilter) params.set('city',     cityFilter);
+      if (hasEmail)   params.set('hasEmail', hasEmail);
 
-    const res  = await fetch(`/api/registry?${params}`);
-    const json = await res.json();
-    setCompanies(json.data  ?? []);
-    setTotal(json.total ?? 0);
-    setLoading(false);
+      const res = await fetch(`/api/registry?${params}`);
+      if (!res.ok) {
+        const text = await res.text();
+        setError(`Ошибка сервера (${res.status}): ${text.slice(0, 200)}`);
+        return;
+      }
+      const json = await res.json();
+      setCompanies(json.data  ?? []);
+      setTotal(json.total ?? 0);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Неизвестная ошибка');
+    } finally {
+      setLoading(false);
+    }
   }, [page, search, okedFilter, cityFilter, hasEmail]);
 
   useEffect(() => { load(); }, [load]);
@@ -171,6 +184,12 @@ function RegistryContent() {
           <RefreshCw size={15} />
         </button>
       </div>
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 text-red-700 rounded-xl px-4 py-3 text-sm mb-4 font-mono break-all">
+          {error}
+        </div>
+      )}
 
       {/* Table */}
       <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
