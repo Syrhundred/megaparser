@@ -8,15 +8,17 @@
 import { createScrapeWorker } from './scrape.worker';
 import { createSendWorker } from './send.worker';
 import { createMapsScrapeWorker } from './maps-scrape.worker';
+import { createCatalogImportWorker } from './catalog-import.worker';
 import { closeBrowser } from '../lib/browser';
 
 const workers = [
   createScrapeWorker(),
   createSendWorker(),
   createMapsScrapeWorker(),
+  createCatalogImportWorker(),
 ];
 
-console.log('[workers] started — listening on queues: scrape, send, maps-scrape');
+console.log('[workers] started — listening on queues: scrape, send, maps-scrape, catalog-import');
 
 // Graceful shutdown: let in-flight jobs finish, then close Playwright browser
 async function shutdown(signal: string) {

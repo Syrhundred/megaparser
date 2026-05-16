@@ -17,6 +17,13 @@ export interface SendJobPayload {
   attachmentName?: string;
 }
 
+export interface CatalogImportPayload {
+  source: 'apiba';
+  pageStart: number;
+  pageEnd: number;
+  pageSize?: number;
+}
+
 export interface MapsScrapeJobPayload {
   query: string;
   num: number;
@@ -32,6 +39,7 @@ export interface MapsScrapeJobPayload {
 let _scrapeQueue: Queue<ScrapeJobPayload> | null = null;
 let _sendQueue: Queue<SendJobPayload> | null = null;
 let _mapsScrapeQueue: Queue<MapsScrapeJobPayload> | null = null;
+let _catalogImportQueue: Queue<CatalogImportPayload> | null = null;
 
 const defaultJobOpts = {
   scrape: {
@@ -84,6 +92,21 @@ function getMapsScrapeQueue(): Queue<MapsScrapeJobPayload> {
   return _mapsScrapeQueue;
 }
 
+function getCatalogImportQueue(): Queue<CatalogImportPayload> {
+  if (!_catalogImportQueue) {
+    _catalogImportQueue = new Queue<CatalogImportPayload>('catalog-import', {
+      connection: redis,
+      defaultJobOptions: {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 30_000 },
+        removeOnComplete: { count: 50 },
+        removeOnFail: { count: 50 },
+      },
+    });
+  }
+  return _catalogImportQueue;
+}
+
 // ─── Typed enqueue helpers (called from API routes) ───────────────────────────
 
 export async function enqueueScrape(payload: ScrapeJobPayload): Promise<string> {
@@ -121,4 +144,9 @@ export async function enqueueMapsScrape(payload: MapsScrapeJobPayload): Promise<
 
 // ─── Re-export getters for workers (workers need to pass queue instances to Workers) ─
 
-export { getScrapeQueue, getSendQueue, getMapsScrapeQueue };
+export async function enqueueCatalogImport(payload: CatalogImportPayload): Promise<string> {
+  const job = await getCatalogImportQueue().add('catalog_import', payload);
+  return job.id!;
+}
+
+export { getScrapeQueue, getSendQueue, getMapsScrapeQueue, getCatalogImportQueue };

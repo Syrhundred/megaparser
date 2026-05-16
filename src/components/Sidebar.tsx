@@ -5,13 +5,14 @@ import { usePathname } from 'next/navigation';
 import { useSession, signOut } from 'next-auth/react';
 import {
   LayoutDashboard, Search, Building2, FileText,
-  History, Settings, Zap, LogOut,
+  History, Settings, Zap, LogOut, FolderInput,
 } from 'lucide-react';
 
 const nav = [
   { href: '/dashboard', label: 'Дашборд',  icon: LayoutDashboard },
   { href: '/search',    label: 'Поиск',     icon: Search          },
   { href: '/companies', label: 'Компании',  icon: Building2       },
+  { href: '/import',    label: 'Импорт',    icon: FolderInput     },
   { href: '/templates', label: 'Шаблоны',   icon: FileText        },
   { href: '/history',   label: 'История',   icon: History         },
   { href: '/settings',  label: 'Настройки', icon: Settings        },
