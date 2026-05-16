@@ -22,6 +22,13 @@ export interface CatalogImportPayload {
   pageStart: number;
   pageEnd: number;
   pageSize?: number;
+  oked?: string[];
+  kato?: number[];
+  tax?: {
+    comparison: number;
+    value: string;
+    year: number;
+  };
 }
 
 export interface MapsScrapeJobPayload {

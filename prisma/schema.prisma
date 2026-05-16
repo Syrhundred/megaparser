@@ -28,6 +28,14 @@ model Company {
   foundAt        DateTime   @default(now())
   createdAt      DateTime   @default(now())
   updatedAt      DateTime   @updatedAt
+  // Registry / catalog import fields
+  bin            String?    @unique
+  source         String     @default("manual")
+  ceo            String?
+  industry       String?
+  city           String?
+  taxAmount      Float?
+
   // Background job tracking
   scrapeJobId    String?    // BullMQ job ID for the active scrape job
   sendJobId      String?    // BullMQ job ID for the active send job

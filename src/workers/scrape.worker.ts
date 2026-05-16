@@ -19,6 +19,21 @@ async function processJob(job: Job<ScrapeJobPayload>): Promise<void> {
     data: { scrapeJobId: job.id ?? null },
   });
 
+  // Internal placeholder URLs (e.g. from registry import) — nothing to scrape.
+  // Keep existing contacts instead of overwriting with no_contacts.
+  if (website.startsWith('internal://')) {
+    await prisma.job.updateMany({
+      where: { bullJobId: job.id },
+      data:  { status: 'completed', finishedAt: new Date(), result: { skipped: 'internal_url' } as object },
+    });
+    await prisma.company.update({
+      where: { id: companyId },
+      data:  { scrapeJobId: null },
+    });
+    console.log(`[scrape] skipped internal URL job=${job.id}`);
+    return;
+  }
+
   await job.updateProgress(10);
   console.log(`[scrape] job=${job.id} company=${companyId} url=${website}`);
 

@@ -3,19 +3,20 @@ import { redis } from '../lib/redis';
 import { prisma } from '../lib/prisma';
 import { CatalogImportPayload } from '../lib/queues';
 
-const APIBA_LIST_URL  = 'https://apiba.prgapp.kz/GetCompanyListAsync';
+const APIBA_LIST_URL   = 'https://apiba.prgapp.kz/GetCompanyListAsync';
 const APIBA_DETAIL_URL = 'https://apiba.prgapp.kz/CompanyFullInfo';
-const DELAY_MS = 120; // ms between detail requests — be polite to the API
+const DELAY_MS = 120;
 
-function sleep(ms: number) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
+const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+// ─── API response types ───────────────────────────────────────────────────────
 
 interface ApibaListResult {
   bin: string;
   titleRu: string;
   addressRu?: string;
   primaryOKED?: string;
+  katoTranslit?: string;
 }
 
 interface ApibaListResponse {
@@ -23,35 +24,66 @@ interface ApibaListResponse {
   results: ApibaListResult[];
 }
 
-interface ApibaContactInfo {
-  phone?: { value: string }[] | null;
+interface ContactSource {
+  phone?: { value: string; href?: string }[] | null;
   website?: string | null;
   email?: string | null;
 }
 
 interface ApibaDetailResponse {
   basicInfo?: {
-    titleRu?: { value?: string };
-    addressRu?: { value?: string };
-    primaryOKED?: { value?: string };
     bin?: string;
+    titleRu?:     { value?: string };
+    addressRu?:   { value?: string };
+    primaryOKED?: { value?: string };
+    ceo?:         { value?: { title?: string } };
+    crumbsKato?:  { nameRu?: string };
+    cityName?:    string;
   };
-  gosZakupContacts?: ApibaContactInfo;
-  userContacts?: ApibaContactInfo;
+  gosZakupContacts?: ContactSource;
+  userContacts?:     ContactSource;
+  egovContacts?:     { phone?: { value: string }[] | null };
+  taxes?: {
+    taxGraph?: { year: number; value: number }[];
+  };
 }
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function extractContacts(detail: ApibaDetailResponse) {
-  // Prefer gosZakup contacts (from government procurement portal), fall back to userContacts
-  const src = detail.gosZakupContacts ?? detail.userContacts;
-  return {
-    phone:   src?.phone?.[0]?.value?.trim() || null,
-    email:   src?.email?.trim() || null,
-    website: src?.website?.trim() || null,
+  const phones: string[] = [];
+  const addPhone = (v?: string | null) => {
+    const p = v?.trim();
+    if (p && !phones.includes(p)) phones.push(p);
   };
+
+  addPhone(detail.gosZakupContacts?.phone?.[0]?.value);
+  addPhone(detail.userContacts?.phone?.[0]?.value);
+  addPhone((detail.egovContacts?.phone as unknown as { value: string }[] | null)?.[0]?.value);
+
+  const email = detail.gosZakupContacts?.email?.trim()
+             || detail.userContacts?.email?.trim()
+             || null;
+
+  const website = detail.gosZakupContacts?.website?.trim()
+               || detail.userContacts?.website?.trim()
+               || null;
+
+  return { phone: phones[0] ?? null, email, website };
 }
 
+function latestTax(detail: ApibaDetailResponse): number | null {
+  const graph = detail.taxes?.taxGraph;
+  if (!graph?.length) return null;
+  const sorted = [...graph].sort((a, b) => b.year - a.year);
+  const hit = sorted.find(t => t.value > 0);
+  return hit?.value ?? null;
+}
+
+// ─── Main import logic ────────────────────────────────────────────────────────
+
 async function processApiba(job: Job<CatalogImportPayload>) {
-  const { pageStart, pageEnd, pageSize = 100 } = job.data;
+  const { pageStart, pageEnd, pageSize = 100, oked, kato, tax } = job.data;
   const totalPages = pageEnd - pageStart + 1;
 
   let imported = 0;
@@ -61,59 +93,88 @@ async function processApiba(job: Job<CatalogImportPayload>) {
   for (let page = pageStart; page <= pageEnd; page++) {
     console.log(`[catalog-import] apiba page ${page}/${pageEnd}`);
 
-    const listRes = await fetch(APIBA_LIST_URL, {
-      method:  'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body:    JSON.stringify({ page, pageSize }),
-    });
+    const body: Record<string, unknown> = {
+      kato:     kato ?? [],
+      krp:      [],
+      market:   { comparison: null },
+      oked:     oked ?? [],
+      page,
+      pageSize,
+    };
+    if (tax) body.tax = tax;
 
-    if (!listRes.ok) {
-      console.error(`[catalog-import] list fetch failed: ${listRes.status}`);
+    let listData: ApibaListResponse;
+    try {
+      const listRes = await fetch(APIBA_LIST_URL, {
+        method:  'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body:    JSON.stringify(body),
+      });
+      if (!listRes.ok) { console.error(`[catalog-import] list ${listRes.status}`); continue; }
+      listData = await listRes.json();
+    } catch (err) {
+      console.error('[catalog-import] list fetch error:', err);
       continue;
     }
-
-    const listData: ApibaListResponse = await listRes.json();
 
     for (const company of listData.results) {
       await sleep(DELAY_MS);
 
       let contacts = { phone: null as string | null, email: null as string | null, website: null as string | null };
-      let name = company.titleRu;
-      let address = company.addressRu ?? null;
+      let name      = company.titleRu;
+      let address   = company.addressRu  ?? null;
+      let industry  = company.primaryOKED ?? null;
+      let ceo:       string | null = null;
+      let city:      string | null = null;
+      let taxAmount: number | null = null;
 
       try {
         const detailRes = await fetch(`${APIBA_DETAIL_URL}?id=${company.bin}&lang=ru`);
         if (detailRes.ok) {
           const detail: ApibaDetailResponse = await detailRes.json();
-          contacts = extractContacts(detail);
-          name    = detail.basicInfo?.titleRu?.value ?? name;
-          address = detail.basicInfo?.addressRu?.value ?? address;
+          contacts  = extractContacts(detail);
+          name      = detail.basicInfo?.titleRu?.value     ?? name;
+          address   = detail.basicInfo?.addressRu?.value   ?? address;
+          industry  = detail.basicInfo?.primaryOKED?.value ?? industry;
+          ceo       = detail.basicInfo?.ceo?.value?.title  ?? null;
+          city      = detail.basicInfo?.crumbsKato?.nameRu
+                   ?? detail.basicInfo?.cityName
+                   ?? null;
+          taxAmount = latestTax(detail);
         }
       } catch (err) {
-        console.warn(`[catalog-import] detail fetch failed for ${company.bin}:`, err);
+        console.warn(`[catalog-import] detail failed bin=${company.bin}:`, err);
       }
 
-      // Use real website if available, otherwise use internal placeholder keyed by BIN
       const websiteUrl = contacts.website ?? `internal://bin/${company.bin}`;
-
-      const status = contacts.email   ? 'email_found'
-                   : contacts.phone   ? 'contact_found'
+      const status = contacts.email  ? 'email_found'
+                   : contacts.phone  ? 'contact_found'
                    : 'site_found';
 
       try {
-        const existing = await prisma.company.findUnique({ where: { website: websiteUrl } });
+        // Try upsert by BIN first (most reliable), fall back to website
+        const existing = await prisma.company.findFirst({
+          where: { OR: [{ bin: company.bin }, { website: websiteUrl }] },
+        });
 
         if (existing) {
-          // Update contacts if we now have better data
-          if (contacts.phone || contacts.email) {
+          // Only update if we now have better contacts
+          const needsUpdate = (!existing.phone && contacts.phone)
+                           || (!existing.email && contacts.email)
+                           || (!existing.ceo   && ceo);
+          if (needsUpdate) {
             await prisma.company.update({
               where: { id: existing.id },
               data: {
-                phone:  contacts.phone  ?? existing.phone,
-                email:  contacts.email  ?? existing.email,
-                status: contacts.email  ? 'email_found'
-                      : contacts.phone  ? 'contact_found'
-                      : existing.status,
+                phone:     contacts.phone  ?? existing.phone,
+                email:     contacts.email  ?? existing.email,
+                ceo:       ceo             ?? existing.ceo,
+                industry:  industry        ?? existing.industry,
+                city:      city            ?? existing.city,
+                taxAmount: taxAmount       ?? existing.taxAmount,
+                status:    contacts.email  ? 'email_found'
+                         : contacts.phone  ? 'contact_found'
+                         : existing.status,
               },
             });
             updated++;
@@ -124,49 +185,50 @@ async function processApiba(job: Job<CatalogImportPayload>) {
           await prisma.company.create({
             data: {
               name,
-              website:     websiteUrl,
-              phone:       contacts.phone,
-              email:       contacts.email,
+              website:  websiteUrl,
+              bin:      company.bin,
+              source:   'apiba',
+              phone:    contacts.phone,
+              email:    contacts.email,
               address,
-              description: company.primaryOKED ?? null,
+              industry,
+              ceo,
+              city,
+              taxAmount,
               status,
-              searchQuery: `apiba:bin:${company.bin}`,
+              searchQuery: `apiba:${industry ?? ''}`,
             },
           });
           imported++;
         }
       } catch (err) {
-        console.warn(`[catalog-import] db error for ${company.bin}:`, err);
+        console.warn(`[catalog-import] db error bin=${company.bin}:`, err);
         skipped++;
       }
     }
 
-    const progress = Math.round(((page - pageStart + 1) / totalPages) * 100);
-    await job.updateProgress(progress);
+    await job.updateProgress(Math.round(((page - pageStart + 1) / totalPages) * 100));
   }
 
   return { imported, updated, skipped };
 }
 
+// ─── Worker ───────────────────────────────────────────────────────────────────
+
 export function createCatalogImportWorker() {
   const worker = new Worker<CatalogImportPayload>(
     'catalog-import',
     async (job) => {
-      // Mark DB Job row as active
       await prisma.job.updateMany({
         where: { bullJobId: job.id },
         data:  { status: 'active', startedAt: new Date(), attempt: job.attemptsMade + 1 },
       });
 
-      let result: { imported: number; updated: number; skipped: number };
+      const result = job.data.source === 'apiba'
+        ? await processApiba(job)
+        : (() => { throw new Error(`Unknown source: ${job.data.source}`); })();
 
-      if (job.data.source === 'apiba') {
-        result = await processApiba(job);
-      } else {
-        throw new Error(`Unknown catalog source: ${job.data.source}`);
-      }
-
-      console.log(`[catalog-import] done: imported=${result.imported} updated=${result.updated} skipped=${result.skipped}`);
+      console.log(`[catalog-import] done imported=${result.imported} updated=${result.updated} skipped=${result.skipped}`);
 
       await prisma.job.updateMany({
         where: { bullJobId: job.id },
@@ -175,10 +237,7 @@ export function createCatalogImportWorker() {
 
       return result;
     },
-    {
-      connection: redis,
-      concurrency: 1,
-    },
+    { connection: redis, concurrency: 1 },
   );
 
   worker.on('failed', async (job, err) => {
@@ -188,7 +247,7 @@ export function createCatalogImportWorker() {
         data:  { status: 'failed', finishedAt: new Date(), errorMsg: err.message },
       });
     }
-    console.error('[catalog-import] job failed:', err.message);
+    console.error('[catalog-import] failed:', err.message);
   });
 
   return worker;
