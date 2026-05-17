@@ -35,6 +35,7 @@ model Company {
   industry       String?
   city           String?
   taxAmount      Float?
+  taxGraph       Json?      // [{year: number, value: number}] full history from apiba
 
   // Background job tracking
   scrapeJobId    String?    // BullMQ job ID for the active scrape job

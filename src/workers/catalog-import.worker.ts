@@ -1,6 +1,7 @@
 import { Worker, Job } from 'bullmq';
 import { redis } from '../lib/redis';
 import { prisma } from '../lib/prisma';
+import { Prisma } from '@prisma/client';
 import { CatalogImportPayload } from '../lib/queues';
 
 const APIBA_LIST_URL   = 'https://apiba.prgapp.kz/GetCompanyListAsync';
@@ -83,6 +84,12 @@ function latestTax(detail: ApibaDetailResponse): number | null {
   return hit?.value ?? null;
 }
 
+function taxGraphData(detail: ApibaDetailResponse): { year: number; value: number }[] | null {
+  const graph = detail.taxes?.taxGraph;
+  if (!graph?.length) return null;
+  return [...graph].filter(t => t.value > 0).sort((a, b) => b.year - a.year);
+}
+
 // ─── Main import logic ────────────────────────────────────────────────────────
 
 async function processApiba(job: Job<CatalogImportPayload>) {
@@ -130,6 +137,7 @@ async function processApiba(job: Job<CatalogImportPayload>) {
       let ceo:       string | null = null;
       let city:      string | null = null;
       let taxAmount: number | null = null;
+      let taxGraph:  { year: number; value: number }[] | null = null;
 
       try {
         const detailRes = await fetch(`${APIBA_DETAIL_URL}?id=${company.bin}&lang=ru`);
@@ -144,6 +152,7 @@ async function processApiba(job: Job<CatalogImportPayload>) {
                    ?? detail.basicInfo?.cityName
                    ?? null;
           taxAmount = latestTax(detail);
+          taxGraph  = taxGraphData(detail);
         }
       } catch (err) {
         console.warn(`[catalog-import] detail failed bin=${company.bin}:`, err);
@@ -171,6 +180,7 @@ async function processApiba(job: Job<CatalogImportPayload>) {
               ceo:       ceo       ?? existing.ceo,
               city:      city      ?? existing.city,
               taxAmount: taxAmount ?? existing.taxAmount,
+              taxGraph:  taxGraph  ?? existing.taxGraph  ?? Prisma.JsonNull,
               phone:     contacts.phone ?? existing.phone,
               email:     contacts.email ?? existing.email,
               status:    contacts.email  ? 'email_found'
@@ -193,6 +203,7 @@ async function processApiba(job: Job<CatalogImportPayload>) {
               ceo,
               city,
               taxAmount,
+              taxGraph:  taxGraph ?? Prisma.JsonNull,
               status,
               searchQuery: `apiba:${industry ?? ''}`,
             },
